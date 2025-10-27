@@ -23,6 +23,10 @@ app.post('/api/evaluate', validate(evaluateRequestSchema), handleEvaluate);
 
 const port = process.env.PORT ?? 3001;
 
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
-});
+if (process.env.VERCEL !== '1') {
+  app.listen(port, () => {
+    console.log(`Server running on port ${port}`);
+  });
+}
+
+export default app;
