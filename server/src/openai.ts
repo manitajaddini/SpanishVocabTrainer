@@ -1,6 +1,12 @@
 import OpenAI from 'openai';
 import type { Request, Response } from 'express';
-import { buildEvaluationUserPrompt, buildGenerationUserPrompt, evaluationSystemPrompt, generationSystemPrompt } from './prompts.js';
+import {
+  buildEvaluationSystemPrompt,
+  buildEvaluationUserPayload,
+  buildGenerationSystemPrompt,
+  buildGenerationUserPayload,
+  type LanguagePair
+} from './prompts.js';
 import { evaluationResponseSchema } from './schemas.js';
 
 const MODEL_GENERATION = 'gpt-4o-mini';
@@ -136,21 +142,21 @@ const normalizeError = (error: unknown, fallback: string) => {
 
 export const handleGenerate = async (req: Request, res: Response) => {
   const model = resolveModel(req, MODEL_GENERATION);
+  const { lemma, languages } = req.body as { lemma: string; languages: LanguagePair };
   try {
     const apiKey = getApiKey(req);
     const client = createClient(apiKey);
-    const { lemma } = req.body as { lemma: string };
     const result = await withRetry(async () => {
       const response = await client.responses.create({
         model,
         input: [
           {
             role: 'system',
-            content: generationSystemPrompt
+            content: buildGenerationSystemPrompt(languages)
           },
           {
             role: 'user',
-            content: buildGenerationUserPrompt(lemma)
+            content: JSON.stringify(buildGenerationUserPayload(lemma, languages))
           }
         ]
       });
@@ -179,31 +185,32 @@ export const handleGenerate = async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Generate error', error);
     const normalized = normalizeError(error, 'Failed to generate prompt');
-    res.status(normalized.status).json({ ...normalized.body, model });
+    res.status(normalized.status).json({ ...normalized.body, model, languages });
   }
 };
 
 export const handleEvaluate = async (req: Request, res: Response) => {
   const model = resolveModel(req, MODEL_EVALUATION);
+  const { lemma, prompt, userAnswer, languages } = req.body as {
+    lemma: string;
+    prompt: string;
+    userAnswer: string;
+    languages: LanguagePair;
+  };
   try {
     const apiKey = getApiKey(req);
     const client = createClient(apiKey);
-    const { lemma, englishPrompt, userAnswer } = req.body as {
-      lemma: string;
-      englishPrompt: string;
-      userAnswer: string;
-    };
     const evaluation = await withRetry(async () => {
       const response = await client.responses.create({
         model,
         input: [
           {
             role: 'system',
-            content: evaluationSystemPrompt
+            content: buildEvaluationSystemPrompt(languages)
           },
           {
             role: 'user',
-            content: buildEvaluationUserPrompt(englishPrompt, lemma, userAnswer)
+            content: JSON.stringify(buildEvaluationUserPayload(prompt, lemma, userAnswer, languages))
           }
         ],
         text: {
@@ -234,6 +241,6 @@ export const handleEvaluate = async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Evaluate error', error);
     const normalized = normalizeError(error, 'Failed to evaluate answer');
-    res.status(normalized.status).json({ ...normalized.body, model });
+    res.status(normalized.status).json({ ...normalized.body, model, languages, prompt, lemma });
   }
 };
