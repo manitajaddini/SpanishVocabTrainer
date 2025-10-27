@@ -1,4 +1,10 @@
-const BASE_URL = '/api';
+const BASE_URL = (() => {
+    const envUrl = import.meta.env.VITE_API_BASE_URL;
+    if (!envUrl || envUrl.trim().length === 0) {
+        return '/api';
+    }
+    return envUrl.replace(/\/$/, '');
+})();
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const withRetry = async (fn, attempts = 3) => {
     let lastError;

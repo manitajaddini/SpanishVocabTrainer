@@ -1,6 +1,12 @@
 import type { EvaluationResult } from '../types';
 
-const BASE_URL = '/api';
+const BASE_URL = (() => {
+  const envUrl = import.meta.env.VITE_API_BASE_URL;
+  if (!envUrl || envUrl.trim().length === 0) {
+    return '/api';
+  }
+  return envUrl.replace(/\/$/, '');
+})();
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
