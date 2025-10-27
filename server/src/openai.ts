@@ -5,6 +5,7 @@ import { evaluationResponseSchema } from './schemas.js';
 
 const MODEL_GENERATION = 'gpt-4o-mini';
 const MODEL_EVALUATION = 'gpt-4o-mini';
+const ALLOWED_MODELS = new Set<string>(['gpt-4o-mini', 'gpt-4o']);
 
 const evaluationResponseFormat = {
   type: 'json_schema',
@@ -42,6 +43,14 @@ const evaluationResponseFormat = {
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const shouldRetry = (error: unknown) => {
+  const status = (error as { status?: number })?.status;
+  if (typeof status === 'number' && status >= 400 && status < 500) {
+    return false;
+  }
+  return true;
+};
+
 const withRetry = async <T>(fn: () => Promise<T>, attempts = 3): Promise<T> => {
   let lastError: unknown;
   for (let i = 0; i < attempts; i += 1) {
@@ -49,6 +58,9 @@ const withRetry = async <T>(fn: () => Promise<T>, attempts = 3): Promise<T> => {
       return await fn();
     } catch (error) {
       lastError = error;
+      if (!shouldRetry(error) || i === attempts - 1) {
+        break;
+      }
       const backoff = 300 * 2 ** i;
       await wait(backoff);
     }
@@ -70,14 +82,67 @@ const getApiKey = (req: Request): string => {
 
 const createClient = (apiKey: string) => new OpenAI({ apiKey });
 
+const resolveModel = (req: Request, fallback: string) => {
+  const headerModel = req.headers['x-model'];
+  if (typeof headerModel === 'string') {
+    const trimmed = headerModel.trim();
+    if (ALLOWED_MODELS.has(trimmed)) {
+      return trimmed;
+    }
+    console.warn(`Unsupported model "${trimmed}" requested. Falling back to ${fallback}.`);
+  }
+  return fallback;
+};
+
+const normalizeError = (error: unknown, fallback: string) => {
+  if (error instanceof OpenAI.APIError) {
+    const detail =
+      typeof error.error === 'object' && error.error !== null && 'message' in error.error
+        ? String((error.error as { message?: unknown }).message ?? error.message)
+        : error.message;
+    const code =
+      typeof error.code === 'string'
+        ? error.code
+        : typeof (error.error as { code?: unknown })?.code === 'string'
+          ? String((error.error as { code?: unknown }).code)
+          : undefined;
+    return {
+      status: error.status ?? 500,
+      body: {
+        error: fallback,
+        detail,
+        code
+      }
+    };
+  }
+  const status = (error as { status?: number })?.status ?? 500;
+  const detail =
+    error instanceof Error
+      ? error.message
+      : typeof (error as { message?: unknown })?.message === 'string'
+        ? String((error as { message?: unknown }).message)
+        : undefined;
+  const code =
+    typeof (error as { code?: unknown })?.code === 'string' ? String((error as { code?: unknown }).code) : undefined;
+  return {
+    status,
+    body: {
+      error: fallback,
+      detail: detail ?? fallback,
+      code
+    }
+  };
+};
+
 export const handleGenerate = async (req: Request, res: Response) => {
+  const model = resolveModel(req, MODEL_GENERATION);
   try {
     const apiKey = getApiKey(req);
     const client = createClient(apiKey);
     const { lemma } = req.body as { lemma: string };
     const result = await withRetry(async () => {
       const response = await client.responses.create({
-        model: MODEL_GENERATION,
+        model,
         input: [
           {
             role: 'system',
@@ -113,12 +178,13 @@ export const handleGenerate = async (req: Request, res: Response) => {
     res.json({ prompt: result });
   } catch (error) {
     console.error('Generate error', error);
-    const status = (error as { status?: number }).status ?? 500;
-    res.status(status).json({ error: 'Failed to generate prompt' });
+    const normalized = normalizeError(error, 'Failed to generate prompt');
+    res.status(normalized.status).json({ ...normalized.body, model });
   }
 };
 
 export const handleEvaluate = async (req: Request, res: Response) => {
+  const model = resolveModel(req, MODEL_EVALUATION);
   try {
     const apiKey = getApiKey(req);
     const client = createClient(apiKey);
@@ -129,7 +195,7 @@ export const handleEvaluate = async (req: Request, res: Response) => {
     };
     const evaluation = await withRetry(async () => {
       const response = await client.responses.create({
-        model: MODEL_EVALUATION,
+        model,
         input: [
           {
             role: 'system',
@@ -161,14 +227,13 @@ export const handleEvaluate = async (req: Request, res: Response) => {
       if (!raw) {
         throw new Error('Invalid evaluation response');
       }
-      console.log('Evaluation raw response', raw);
       const parsed = JSON.parse(raw);
       return evaluationResponseSchema.parse(parsed);
     });
     res.json({ result: evaluation });
   } catch (error) {
     console.error('Evaluate error', error);
-    const status = (error as { status?: number }).status ?? 500;
-    res.status(status).json({ error: 'Failed to evaluate answer' });
+    const normalized = normalizeError(error, 'Failed to evaluate answer');
+    res.status(normalized.status).json({ ...normalized.body, model });
   }
 };

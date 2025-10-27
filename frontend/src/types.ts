@@ -57,4 +57,8 @@ export type RetryState = {
   action: PendingAction;
   lemma: string;
   payload: Record<string, unknown>;
+  message: string;
+  detail?: string;
+  status?: number;
+  code?: string;
 };

@@ -5,6 +5,16 @@ const BASE_URL = (() => {
     }
     return envUrl.replace(/\/$/, '');
 })();
+export class ApiError extends Error {
+    constructor(message, status, detail, code, body) {
+        super(message);
+        this.name = 'ApiError';
+        this.status = status;
+        this.detail = detail;
+        this.code = code;
+        this.body = body;
+    }
+}
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const withRetry = async (fn, attempts = 3) => {
     let lastError;
@@ -20,45 +30,76 @@ const withRetry = async (fn, attempts = 3) => {
     }
     throw lastError;
 };
-const buildHeaders = (apiKey) => {
+const buildHeaders = ({ apiKey, model }) => {
     const headers = {
         'Content-Type': 'application/json'
     };
     if (apiKey) {
         headers['x-api-key'] = apiKey;
     }
+    if (model) {
+        headers['x-model'] = model;
+    }
     return headers;
 };
-export const generatePrompt = async (lemma, apiKey, signal) => {
+const parseError = async (response, fallbackMessage) => {
+    let message = fallbackMessage;
+    let detail;
+    let code;
+    let body;
+    try {
+        body = await response.json();
+        if (body && typeof body === 'object') {
+            const payload = body;
+            if (typeof payload.error === 'string' && payload.error.trim().length > 0) {
+                message = payload.error;
+            }
+            if (typeof payload.detail === 'string') {
+                detail = payload.detail;
+            }
+            if (typeof payload.code === 'string') {
+                code = payload.code;
+            }
+        }
+    }
+    catch {
+        // ignore JSON parse errors, fallback to default message
+    }
+    return new ApiError(message, response.status, detail, code, body);
+};
+export const generatePrompt = async (lemma, options = {}) => {
     return withRetry(async () => {
         const response = await fetch(`${BASE_URL}/generate`, {
             method: 'POST',
-            headers: buildHeaders(apiKey),
+            headers: buildHeaders(options),
             body: JSON.stringify({ lemma }),
-            signal
+            signal: options.signal
         });
         if (!response.ok) {
-            throw new Error('Failed to generate prompt');
+            throw await parseError(response, 'Failed to generate prompt');
         }
         const payload = (await response.json());
         if (!payload.prompt || typeof payload.prompt !== 'string') {
-            throw new Error('Invalid prompt payload');
+            throw new ApiError('Invalid prompt payload', response.status, undefined, undefined, payload);
         }
         return payload.prompt;
     });
 };
-export const evaluateAnswer = async (lemma, englishPrompt, userAnswer, apiKey, signal) => {
+export const evaluateAnswer = async (lemma, englishPrompt, userAnswer, options = {}) => {
     return withRetry(async () => {
         const response = await fetch(`${BASE_URL}/evaluate`, {
             method: 'POST',
-            headers: buildHeaders(apiKey),
+            headers: buildHeaders(options),
             body: JSON.stringify({ lemma, englishPrompt, userAnswer }),
-            signal
+            signal: options.signal
         });
         if (!response.ok) {
-            throw new Error('Failed to evaluate answer');
+            throw await parseError(response, 'Failed to evaluate answer');
         }
         const payload = (await response.json());
+        if (!payload || typeof payload !== 'object' || !payload.result) {
+            throw new ApiError('Invalid evaluation payload', response.status, undefined, undefined, payload);
+        }
         return payload.result;
     });
 };

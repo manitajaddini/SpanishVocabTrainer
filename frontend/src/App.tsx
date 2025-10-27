@@ -3,7 +3,10 @@ import CsvLoader from './components/CsvLoader';
 import QuizCard from './components/QuizCard';
 import ScorePanel from './components/ScorePanel';
 import Settings from './components/Settings';
-import { generatePrompt, evaluateAnswer } from './lib/openai';
+import Onboarding from './components/Onboarding';
+import InsightsPanel from './components/InsightsPanel';
+import { MODEL_OPTIONS, type ModelOption } from './config/models';
+import { generatePrompt, evaluateAnswer, ApiError } from './lib/openai';
 import { createInitialQueue, getCurrentLemma, isExhausted, markLemmaUsed, reshuffle, skipCurrentLemma } from './lib/scheduler';
 import { clearState, loadState, saveState } from './lib/storage';
 import {
@@ -17,6 +20,14 @@ import {
   type ScoreState
 } from './lib/scoring';
 import { shouldAdvance } from './lib/evaluation';
+import {
+  createInitialInsightState,
+  recordOutcome,
+  recentAccuracy as insightRecentAccuracy,
+  hardestLemmas,
+  totalAttemptsTracked,
+  type InsightState
+} from './lib/insights';
 import type { AppView, CsvRow, LemmaQueueState, QuizItem, RetryState } from './types';
 
 const CSV_STORAGE = { key: 'csv-data', version: 1 } as const;
@@ -25,6 +36,9 @@ const SCORE_STORAGE = { key: 'score', version: 1 } as const;
 const PROGRESS_STORAGE = { key: 'progress', version: 1 } as const;
 const CURRENT_STORAGE = { key: 'current', version: 1 } as const;
 const API_KEY_STORAGE = { key: 'api-key', version: 1 } as const;
+const MODEL_STORAGE = { key: 'model', version: 1 } as const;
+const ONBOARDING_STORAGE = { key: 'onboarding', version: 1 } as const;
+const INSIGHTS_STORAGE = { key: 'insights', version: 1 } as const;
 
 type StoredCsv = {
   rows: CsvRow[];
@@ -67,10 +81,39 @@ const App = () => {
   const [modelError, setModelError] = useState<RetryState | null>(null);
   const [loadingPrompt, setLoadingPrompt] = useState(false);
   const [batchSummary, setBatchSummary] = useState<BatchSummary | null>(null);
+  const [selectedModel, setSelectedModel] = useState<ModelOption['value']>(MODEL_OPTIONS[0].value);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [insights, setInsights] = useState<InsightState>(createInitialInsightState);
+
+  const dismissOnboarding = () => {
+    saveState(ONBOARDING_STORAGE, true);
+    setShowOnboarding(false);
+  };
+
+  const reopenOnboarding = () => {
+    saveState(ONBOARDING_STORAGE, false);
+    setShowOnboarding(true);
+  };
+
+  const vibrate = (pattern: number | number[]) => {
+    if (typeof window === 'undefined') return;
+    const nav = window.navigator as Navigator & { vibrate?: (pattern: number | number[]) => boolean };
+    if (typeof nav?.vibrate !== 'function') return;
+    if (typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      return;
+    }
+    try {
+      nav.vibrate(pattern);
+    } catch {
+      // noop
+    }
+  };
 
   useEffect(() => {
     const storedKey = loadState<string>(API_KEY_STORAGE);
     if (storedKey) setApiKey(storedKey);
+    const storedModel = loadState<ModelOption['value']>(MODEL_STORAGE);
+    if (storedModel) setSelectedModel(storedModel);
     const storedCsv = loadState<StoredCsv>(CSV_STORAGE);
     if (storedCsv) {
       setCsvData(storedCsv);
@@ -92,6 +135,10 @@ const App = () => {
       });
       setAnswer(storedCurrent.answer);
     }
+    const onboardingSeen = loadState<boolean>(ONBOARDING_STORAGE);
+    setShowOnboarding(onboardingSeen !== true);
+    const storedInsights = loadState<InsightState>(INSIGHTS_STORAGE);
+    if (storedInsights) setInsights(storedInsights);
   }, []);
 
   useEffect(() => {
@@ -115,6 +162,10 @@ const App = () => {
   }, [progress]);
 
   useEffect(() => {
+    saveState(MODEL_STORAGE, selectedModel);
+  }, [selectedModel]);
+
+  useEffect(() => {
     if (currentItem) {
       saveState(CURRENT_STORAGE, {
         lemma: currentItem.lemma,
@@ -126,6 +177,10 @@ const App = () => {
       clearState(CURRENT_STORAGE.key);
     }
   }, [currentItem, answer]);
+
+  useEffect(() => {
+    saveState(INSIGHTS_STORAGE, insights);
+  }, [insights]);
 
   const lemmasLeft = useMemo(() => {
     if (!queue) return 0;
@@ -142,7 +197,7 @@ const App = () => {
     setLoadingPrompt(true);
     setModelError(null);
     try {
-      const prompt = await generatePrompt(lemma, apiKey);
+      const prompt = await generatePrompt(lemma, { apiKey, model: selectedModel });
       const item: QuizItem = {
         lemma,
         englishPrompt: prompt,
@@ -151,9 +206,21 @@ const App = () => {
       };
       setCurrentItem(item);
       setAnswer('');
+      if (showOnboarding) {
+        dismissOnboarding();
+      }
     } catch (error) {
       console.error(error);
-      setModelError({ action: 'generate', lemma, payload: {} });
+      const apiError = error instanceof ApiError ? error : null;
+      setModelError({
+        action: 'generate',
+        lemma,
+        payload: {},
+        message: apiError?.message ?? (error instanceof Error ? error.message : 'Model temporarily unavailable'),
+        detail: apiError?.detail,
+        status: apiError?.status,
+        code: apiError?.code
+      });
     } finally {
       setLoadingPrompt(false);
     }
@@ -178,6 +245,7 @@ const App = () => {
     setAnswer('');
     setBatchSummary(null);
     setView('quiz');
+    setInsights(createInitialInsightState());
   };
 
   const persistQueueUpdate = (next: LemmaQueueState) => {
@@ -190,9 +258,12 @@ const App = () => {
     const nextAttempts = currentItem.attempts + 1;
     setCurrentItem((prev) => (prev ? { ...prev, status: 'evaluating', attempts: nextAttempts, lastResult: undefined } : prev));
     try {
-      const result = await evaluateAnswer(lemma, englishPrompt, answer, apiKey);
+      const result = await evaluateAnswer(lemma, englishPrompt, answer, { apiKey, model: selectedModel });
       setScoreState((prev) => recordEvaluation(prev, result.score_delta, result.is_correct_meaning, result.explanations));
-      if (shouldAdvance(result)) {
+      const shouldMove = shouldAdvance(result);
+      setInsights((prev) => recordOutcome(prev, lemma, shouldMove));
+      vibrate(shouldMove ? 30 : [40, 35, 40]);
+      if (shouldMove) {
         const updatedQueue = markLemmaUsed(queue, lemma);
         persistQueueUpdate(updatedQueue);
         setProgress((prev) => ({
@@ -212,7 +283,16 @@ const App = () => {
         payload: {
           englishPrompt,
           userAnswer: answer
-        }
+        },
+        message:
+          error instanceof ApiError
+            ? error.message
+            : error instanceof Error
+              ? error.message
+              : 'Model temporarily unavailable',
+        detail: error instanceof ApiError ? error.detail : undefined,
+        status: error instanceof ApiError ? error.status : undefined,
+        code: error instanceof ApiError ? error.code : undefined
       });
       setCurrentItem((prev) => (prev ? { ...prev, status: 'pending', attempts: nextAttempts - 1 } : prev));
     }
@@ -279,10 +359,20 @@ const App = () => {
     saveState(API_KEY_STORAGE, value);
   };
 
+  const handleModelSelect = (value: string) => {
+    const match = MODEL_OPTIONS.find((option) => option.value === value);
+    setSelectedModel((match ?? MODEL_OPTIONS[0]).value);
+  };
+
   const handleReset = () => {
-    [CSV_STORAGE.key, QUEUE_STORAGE.key, SCORE_STORAGE.key, PROGRESS_STORAGE.key, CURRENT_STORAGE.key].forEach((key) =>
-      clearState(key)
-    );
+    [
+      CSV_STORAGE.key,
+      QUEUE_STORAGE.key,
+      SCORE_STORAGE.key,
+      PROGRESS_STORAGE.key,
+      CURRENT_STORAGE.key,
+      INSIGHTS_STORAGE.key
+    ].forEach((key) => clearState(key));
     setCsvData(null);
     setQueue(null);
     setScoreState(createInitialScoreState());
@@ -291,6 +381,8 @@ const App = () => {
     setAnswer('');
     setBatchSummary(null);
     setView('welcome');
+    setInsights(createInitialInsightState());
+    reopenOnboarding();
   };
 
   const handleResumeBatch = () => {
@@ -314,6 +406,14 @@ const App = () => {
   const batchProgress = progress.completedInBatch;
   const acc = accuracy(scoreState);
   const avgAttempts = averageAttemptsPerItem(scoreState, progress.totalCompleted);
+  const activeModel = useMemo(
+    () => MODEL_OPTIONS.find((option) => option.value === selectedModel) ?? MODEL_OPTIONS[0],
+    [selectedModel]
+  );
+  const insightAccuracyValue = insightRecentAccuracy(insights);
+  const focusList = useMemo(() => hardestLemmas(insights), [insights]);
+  const attemptsTracked = totalAttemptsTracked(insights);
+  const issueHighlights = useMemo(() => summarizeExplanations(scoreState.explanations), [scoreState.explanations]);
 
   const showCompletion = queue ? isExhausted(queue) && !getCurrentLemma(queue) : false;
 
@@ -338,6 +438,14 @@ const App = () => {
             accuracy={acc}
             attempts={scoreState.attempts}
             avgAttempts={avgAttempts}
+          />
+          <InsightsPanel
+            streak={insights.streak}
+            bestStreak={insights.bestStreak}
+            recentAccuracy={insightAccuracyValue}
+            totalTracked={attemptsTracked}
+            hardLemmas={focusList}
+            issueHighlights={issueHighlights}
           />
           {currentItem ? (
             <QuizCard
@@ -398,16 +506,29 @@ const App = () => {
           </button>
         </section>
       ) : null}
-      <Settings apiKey={apiKey} onSave={handleSaveApiKey} onReset={handleReset} />
+      <Settings
+        apiKey={apiKey}
+        model={selectedModel}
+        models={MODEL_OPTIONS}
+        onSave={handleSaveApiKey}
+        onReset={handleReset}
+        onModelChange={handleModelSelect}
+      />
       {csvData ? <CsvLoader onLoaded={handleCsvLoaded} existingCount={csvData.lemmas.length} /> : null}
       {modelError ? (
         <div
           role="alert"
           className="fixed inset-x-4 bottom-[max(2rem,env(safe-area-inset-bottom))] z-50 space-y-3 rounded-2xl border border-slate-700 bg-slate-950/95 p-4 text-sm shadow-xl"
         >
-          <p className="text-base font-semibold text-slate-100">Model temporarily unavailable</p>
+          <p className="text-base font-semibold text-slate-100">
+            {modelError.message || 'Model temporarily unavailable'}
+          </p>
           <p className="text-slate-300">
-            We couldn’t reach the language model. You can retry now or skip this item. Check your API key in settings.
+            {modelError.detail ?? 'OpenAI did not accept the request. Retry, switch models, or double-check your API key.'}
+          </p>
+          <p className="text-xs uppercase tracking-wide text-slate-500">
+            {modelError.status ? `Status ${modelError.status}` : 'Status unknown'}
+            {modelError.code ? ` · ${modelError.code}` : ''} · Model {activeModel.label}
           </p>
           <div className="flex gap-3">
             <button
@@ -426,6 +547,15 @@ const App = () => {
             </button>
           </div>
         </div>
+      ) : null}
+      {showOnboarding ? (
+        <Onboarding
+          hasDeck={Boolean(csvData)}
+          hasApiKey={apiKey.trim().length > 0}
+          modelLabel={activeModel.label}
+          onStart={dismissOnboarding}
+          onSkip={() => setShowOnboarding(false)}
+        />
       ) : null}
     </main>
   );

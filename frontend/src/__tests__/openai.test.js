@@ -18,7 +18,7 @@ describe('openai client', () => {
             .mockRejectedValueOnce(new Error('network'))
             .mockResolvedValue({ ok: true, json: async () => ({ prompt: 'Test prompt' }) });
         vi.stubGlobal('fetch', fetchMock);
-        const prompt = await generatePrompt('hablar', 'secret');
+        const prompt = await generatePrompt('hablar', { apiKey: 'secret' });
         expect(prompt).toBe('Test prompt');
         expect(fetchMock).toHaveBeenCalledTimes(2);
         const headers = fetchMock.mock.calls[0][1]?.headers;
@@ -27,7 +27,7 @@ describe('openai client', () => {
     it('returns evaluation payload', async () => {
         const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ result: mockEvaluation }) });
         vi.stubGlobal('fetch', fetchMock);
-        const result = await evaluateAnswer('hablar', 'Speak clearly', 'Habla claro', 'secret');
+        const result = await evaluateAnswer('hablar', 'Speak clearly', 'Habla claro', { apiKey: 'secret' });
         expect(result).toEqual(mockEvaluation);
         expect(fetchMock).toHaveBeenCalledWith('/api/evaluate', expect.objectContaining({
             headers: expect.objectContaining({ 'x-api-key': 'secret' })
