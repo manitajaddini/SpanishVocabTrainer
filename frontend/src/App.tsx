@@ -216,11 +216,17 @@ const App = () => {
     return { source, target };
   }, [languagePreference, detectedLanguages]);
 
+  const languageSignature = useMemo(
+    () => `${activeLanguages.source.toLowerCase()}→${activeLanguages.target.toLowerCase()}`,
+    [activeLanguages.source, activeLanguages.target]
+  );
+
   useEffect(() => {
-    if (!queue || !currentItem) return;
+    if (!queue) return;
     setCurrentItem(null);
     setAnswer('');
-  }, [queue, currentItem, activeLanguages.source, activeLanguages.target]);
+    setLastAttempt(null);
+  }, [queue, languageSignature]);
 
   const lemmasLeft = useMemo(() => {
     if (!queue) return 0;
