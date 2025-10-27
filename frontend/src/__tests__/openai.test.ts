@@ -22,7 +22,10 @@ describe('openai client', () => {
       .mockResolvedValue({ ok: true, json: async () => ({ prompt: 'Test prompt' }) });
     vi.stubGlobal('fetch', fetchMock);
 
-    const prompt = await generatePrompt('hablar', { apiKey: 'secret' });
+    const prompt = await generatePrompt(
+      { lemma: 'hablar', languages: { source: 'English', target: 'Spanish' } },
+      { apiKey: 'secret' }
+    );
     expect(prompt).toBe('Test prompt');
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const headers = fetchMock.mock.calls[0][1]?.headers as Record<string, string>;
@@ -33,7 +36,15 @@ describe('openai client', () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ result: mockEvaluation }) });
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await evaluateAnswer('hablar', 'Speak clearly', 'Habla claro', { apiKey: 'secret' });
+    const result = await evaluateAnswer(
+      {
+        lemma: 'hablar',
+        prompt: 'Speak clearly',
+        userAnswer: 'Habla claro',
+        languages: { source: 'English', target: 'Spanish' }
+      },
+      { apiKey: 'secret' }
+    );
     expect(result).toEqual(mockEvaluation);
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/evaluate',

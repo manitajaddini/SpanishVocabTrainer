@@ -2,11 +2,12 @@ type OnboardingProps = {
   hasDeck: boolean;
   hasApiKey: boolean;
   modelLabel: string;
+  languageLabel: string;
   onStart: () => void;
   onSkip: () => void;
 };
 
-const Onboarding = ({ hasDeck, hasApiKey, modelLabel, onStart, onSkip }: OnboardingProps) => {
+const Onboarding = ({ hasDeck, hasApiKey, modelLabel, languageLabel, onStart, onSkip }: OnboardingProps) => {
   const steps = [
     {
       id: 'deck',
@@ -22,8 +23,8 @@ const Onboarding = ({ hasDeck, hasApiKey, modelLabel, onStart, onSkip }: Onboard
     },
     {
       id: 'model',
-      title: 'Choose your model',
-      description: `Currently selected: ${modelLabel}. You can switch anytime in Settings.`,
+      title: 'Confirm languages & model',
+      description: `Practicing with ${languageLabel}. Model: ${modelLabel}. Adjust anytime in Settings.`,
       done: hasDeck && hasApiKey
     }
   ] as const;
@@ -86,3 +87,4 @@ const Onboarding = ({ hasDeck, hasApiKey, modelLabel, onStart, onSkip }: Onboard
 };
 
 export default Onboarding;
+

@@ -1,9 +1,8 @@
-import type { CsvRow } from '../types';
-
-const HEADER = ['spanish', 'english'] as const;
+import type { CsvRow, LanguagePair } from '../types';
 
 type ParsedCsv = {
   rows: CsvRow[];
+  detectedLanguages: LanguagePair;
 };
 
 const parseLine = (line: string): string[] => {
@@ -40,19 +39,19 @@ export const parseCsv = (content: string): ParsedCsv => {
     throw new Error('CSV is empty.');
   }
 
-  const header = parseLine(lines[0]).map((h) => h.toLowerCase());
-  if (header.length !== HEADER.length || !HEADER.every((h, index) => header[index] === h)) {
-    throw new Error('CSV header must be "Spanish;English".');
+  const headerCells = parseLine(lines[0]);
+  if (headerCells.length !== 2) {
+    throw new Error('CSV header must contain exactly two columns.');
   }
 
   const rows: CsvRow[] = lines.slice(1).map((line, index) => {
     const cells = parseLine(line);
-    if (cells.length !== HEADER.length) {
+    if (cells.length !== 2) {
       throw new Error(`Row ${index + 2} must have exactly two columns.`);
     }
     return {
-      spanish: cells[0],
-      english: cells[1]
+      target: cells[0],
+      source: cells[1]
     };
   });
 
@@ -60,19 +59,24 @@ export const parseCsv = (content: string): ParsedCsv => {
     throw new Error('CSV must include at least one vocabulary row.');
   }
 
-  return { rows };
+  const detectedLanguages: LanguagePair = {
+    target: headerCells[0]?.trim() || 'Target language',
+    source: headerCells[1]?.trim() || 'Source language'
+  };
+
+  return { rows, detectedLanguages };
 };
 
 export const buildLemmaSet = (rows: CsvRow[]): string[] => {
   const lemmaSet = new Set<string>();
   rows.forEach((row) => {
-    const lemma = row.spanish.trim().toLowerCase();
+    const lemma = row.target.trim().toLowerCase();
     if (lemma) {
       lemmaSet.add(lemma);
     }
   });
   if (lemmaSet.size === 0) {
-    throw new Error('No valid Spanish lemmas found.');
+    throw new Error('No valid target lemmas found.');
   }
   return Array.from(lemmaSet);
 };

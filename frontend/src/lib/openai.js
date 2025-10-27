@@ -67,12 +67,15 @@ const parseError = async (response, fallbackMessage) => {
     }
     return new ApiError(message, response.status, detail, code, body);
 };
-export const generatePrompt = async (lemma, options = {}) => {
+export const generatePrompt = async (params, options = {}) => {
     return withRetry(async () => {
         const response = await fetch(`${BASE_URL}/generate`, {
             method: 'POST',
             headers: buildHeaders(options),
-            body: JSON.stringify({ lemma }),
+            body: JSON.stringify({
+                lemma: params.lemma,
+                languages: params.languages
+            }),
             signal: options.signal
         });
         if (!response.ok) {
@@ -85,12 +88,17 @@ export const generatePrompt = async (lemma, options = {}) => {
         return payload.prompt;
     });
 };
-export const evaluateAnswer = async (lemma, englishPrompt, userAnswer, options = {}) => {
+export const evaluateAnswer = async (params, options = {}) => {
     return withRetry(async () => {
         const response = await fetch(`${BASE_URL}/evaluate`, {
             method: 'POST',
             headers: buildHeaders(options),
-            body: JSON.stringify({ lemma, englishPrompt, userAnswer }),
+            body: JSON.stringify({
+                lemma: params.lemma,
+                prompt: params.prompt,
+                userAnswer: params.userAnswer,
+                languages: params.languages
+            }),
             signal: options.signal
         });
         if (!response.ok) {

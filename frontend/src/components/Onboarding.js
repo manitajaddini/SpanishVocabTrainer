@@ -1,5 +1,5 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
-const Onboarding = ({ hasDeck, hasApiKey, modelLabel, onStart, onSkip }) => {
+const Onboarding = ({ hasDeck, hasApiKey, modelLabel, languageLabel, onStart, onSkip }) => {
     const steps = [
         {
             id: 'deck',
@@ -15,8 +15,8 @@ const Onboarding = ({ hasDeck, hasApiKey, modelLabel, onStart, onSkip }) => {
         },
         {
             id: 'model',
-            title: 'Choose your model',
-            description: `Currently selected: ${modelLabel}. You can switch anytime in Settings.`,
+            title: 'Confirm languages & model',
+            description: `Practicing with ${languageLabel}. Model: ${modelLabel}. Adjust anytime in Settings.`,
             done: hasDeck && hasApiKey
         }
     ];

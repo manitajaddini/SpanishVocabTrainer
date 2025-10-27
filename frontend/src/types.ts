@@ -1,6 +1,11 @@
 export type CsvRow = {
-  english: string;
-  spanish: string;
+  target: string;
+  source: string;
+};
+
+export type LanguagePair = {
+  source: string;
+  target: string;
 };
 
 export type LemmaQueueState = {

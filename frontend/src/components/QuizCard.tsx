@@ -13,6 +13,8 @@ type QuizCardProps = {
   feedback?: EvaluationResult;
   targetLemma?: string;
   disableInput?: boolean;
+  sourceLanguage: string;
+  targetLanguage: string;
 };
 
 const QuizCard = ({
@@ -26,24 +28,35 @@ const QuizCard = ({
   onNext,
   feedback,
   targetLemma,
-  disableInput
+  disableInput,
+  sourceLanguage,
+  targetLanguage
 }: QuizCardProps) => {
   const promptId = useId();
   const textareaId = useId();
   const isEvaluating = status === 'evaluating';
   const showFeedback = status === 'feedback' && feedback;
+  const disableSubmit = isEvaluating || answer.trim().length === 0 || Boolean(showFeedback);
+
+  const answerLabel =
+    targetLanguage.trim().length > 0 ? `Your answer (${targetLanguage})` : 'Your answer';
 
   return (
     <section className="space-y-4 rounded-2xl bg-slate-900 p-6 shadow-lg" aria-live="polite">
       <div className="space-y-2">
-        <p className="text-xs uppercase tracking-wide text-slate-400">Translate to Spanish</p>
+        <p className="text-xs uppercase tracking-wide text-slate-400">
+          Translate to {targetLanguage || 'target language'}
+        </p>
         <p id={promptId} className="text-lg font-semibold text-slate-100">
           {englishPrompt}
+        </p>
+        <p className="text-xs text-slate-400">
+          Prompt language: {sourceLanguage || 'source language'}
         </p>
       </div>
       <div className="space-y-2">
         <label className="text-sm font-medium text-slate-200" htmlFor={textareaId}>
-          Your answer
+          {answerLabel}
         </label>
         <textarea
           id={textareaId}
@@ -63,9 +76,9 @@ const QuizCard = ({
           type="button"
           className="rounded-full bg-sky-500 px-6 py-2 text-base font-semibold text-slate-950 focus:outline-none focus:ring-2 focus:ring-sky-300 disabled:opacity-60"
           onClick={onSubmit}
-          disabled={isEvaluating || answer.trim().length === 0}
+          disabled={disableSubmit}
         >
-          {isEvaluating ? 'Checking…' : 'Submit'}
+          {isEvaluating ? 'Checking.' : 'Submit'}
         </button>
       </div>
       {showFeedback ? (
@@ -73,7 +86,9 @@ const QuizCard = ({
           <p className="font-semibold text-slate-100">Feedback</p>
           <p className="text-sm text-slate-200">{feedback.grammar_feedback}</p>
           <p className="text-sm text-slate-300">Improved translation: {feedback.improved_translation}</p>
-          {targetLemma ? <p className="text-sm text-slate-300">Target lemma: {targetLemma}</p> : null}
+          {targetLemma ? (
+            <p className="text-sm text-slate-300">Target lemma: {targetLemma}</p>
+          ) : null}
           <ul className="list-disc space-y-1 pl-5 text-sm text-slate-300">
             {feedback.explanations.map((item, index) => (
               <li key={index}>{item}</li>

@@ -1,4 +1,4 @@
-import type { EvaluationResult } from '../types';
+import type { EvaluationResult, LanguagePair } from '../types';
 
 const BASE_URL = (() => {
   const envUrl = import.meta.env.VITE_API_BASE_URL;
@@ -84,12 +84,30 @@ const parseError = async (response: Response, fallbackMessage: string): Promise<
   return new ApiError(message, response.status, detail, code, body);
 };
 
-export const generatePrompt = async (lemma: string, options: RequestOptions = {}): Promise<string> => {
+export type GeneratePromptParams = {
+  lemma: string;
+  languages: LanguagePair;
+};
+
+export type EvaluateAnswerParams = {
+  lemma: string;
+  prompt: string;
+  userAnswer: string;
+  languages: LanguagePair;
+};
+
+export const generatePrompt = async (
+  params: GeneratePromptParams,
+  options: RequestOptions = {}
+): Promise<string> => {
   return withRetry(async () => {
     const response = await fetch(`${BASE_URL}/generate`, {
       method: 'POST',
       headers: buildHeaders(options),
-      body: JSON.stringify({ lemma }),
+      body: JSON.stringify({
+        lemma: params.lemma,
+        languages: params.languages
+      }),
       signal: options.signal
     });
     if (!response.ok) {
@@ -104,16 +122,19 @@ export const generatePrompt = async (lemma: string, options: RequestOptions = {}
 };
 
 export const evaluateAnswer = async (
-  lemma: string,
-  englishPrompt: string,
-  userAnswer: string,
+  params: EvaluateAnswerParams,
   options: RequestOptions = {}
 ): Promise<EvaluationResult> => {
   return withRetry(async () => {
     const response = await fetch(`${BASE_URL}/evaluate`, {
       method: 'POST',
       headers: buildHeaders(options),
-      body: JSON.stringify({ lemma, englishPrompt, userAnswer }),
+      body: JSON.stringify({
+        lemma: params.lemma,
+        prompt: params.prompt,
+        userAnswer: params.userAnswer,
+        languages: params.languages
+      }),
       signal: options.signal
     });
     if (!response.ok) {

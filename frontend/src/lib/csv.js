@@ -1,4 +1,3 @@
-const HEADER = ['spanish', 'english'];
 const parseLine = (line) => {
     const result = [];
     let current = '';
@@ -33,35 +32,39 @@ export const parseCsv = (content) => {
     if (lines.length === 0) {
         throw new Error('CSV is empty.');
     }
-    const header = parseLine(lines[0]).map((h) => h.toLowerCase());
-    if (header.length !== HEADER.length || !HEADER.every((h, index) => header[index] === h)) {
-        throw new Error('CSV header must be "Spanish;English".');
+    const headerCells = parseLine(lines[0]);
+    if (headerCells.length !== 2) {
+        throw new Error('CSV header must contain exactly two columns.');
     }
     const rows = lines.slice(1).map((line, index) => {
         const cells = parseLine(line);
-        if (cells.length !== HEADER.length) {
+        if (cells.length !== 2) {
             throw new Error(`Row ${index + 2} must have exactly two columns.`);
         }
         return {
-            spanish: cells[0],
-            english: cells[1]
+            target: cells[0],
+            source: cells[1]
         };
     });
     if (rows.length === 0) {
         throw new Error('CSV must include at least one vocabulary row.');
     }
-    return { rows };
+    const detectedLanguages = {
+        target: headerCells[0]?.trim() || 'Target language',
+        source: headerCells[1]?.trim() || 'Source language'
+    };
+    return { rows, detectedLanguages };
 };
 export const buildLemmaSet = (rows) => {
     const lemmaSet = new Set();
     rows.forEach((row) => {
-        const lemma = row.spanish.trim().toLowerCase();
+        const lemma = row.target.trim().toLowerCase();
         if (lemma) {
             lemmaSet.add(lemma);
         }
     });
     if (lemmaSet.size === 0) {
-        throw new Error('No valid Spanish lemmas found.');
+        throw new Error('No valid target lemmas found.');
     }
     return Array.from(lemmaSet);
 };

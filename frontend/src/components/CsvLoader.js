@@ -12,7 +12,7 @@ const CsvLoader = ({ onLoaded, existingCount }) => {
             const text = await file.text();
             const parsed = parseCsv(text);
             const lemmas = buildLemmaSet(parsed.rows);
-            onLoaded(parsed.rows, lemmas);
+            onLoaded(parsed.rows, lemmas, parsed.detectedLanguages);
         }
         catch (err) {
             setError(err instanceof Error ? err.message : 'Unable to parse CSV.');
@@ -24,7 +24,7 @@ const CsvLoader = ({ onLoaded, existingCount }) => {
             }
         }
     };
-    return (_jsxs("section", { className: "space-y-4 rounded-2xl bg-slate-900 p-6 shadow-lg", children: [_jsxs("div", { className: "space-y-2", children: [_jsx("h2", { className: "text-xl font-semibold", children: "Upload your vocabulary CSV" }), _jsxs("p", { className: "text-sm text-slate-300", children: ["Use a semicolon-separated file with headers ", _jsx("code", { children: "Spanish;English" }), ". Data stays on this device."] })] }), _jsxs("label", { className: "flex w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-700 bg-slate-950/60 p-6 text-center text-sm font-medium hover:border-slate-500 focus-within:border-sky-500 focus-within:ring-2 focus-within:ring-sky-500", children: [_jsx("span", { children: loading ? 'Parsing…' : 'Tap to choose CSV' }), _jsx("input", { ref: inputRef, type: "file", accept: ".csv,text/csv", className: "sr-only", onChange: (event) => {
+    return (_jsxs("section", { className: "space-y-4 rounded-2xl bg-slate-900 p-6 shadow-lg", children: [_jsxs("div", { className: "space-y-2", children: [_jsx("h2", { className: "text-xl font-semibold", children: "Upload your vocabulary CSV" }), _jsx("p", { className: "text-sm text-slate-300", children: "Use a semicolon-separated file with two headers (target language;source language). Data stays on this device." })] }), _jsxs("label", { className: "flex w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-700 bg-slate-950/60 p-6 text-center text-sm font-medium hover:border-slate-500 focus-within:border-sky-500 focus-within:ring-2 focus-within:ring-sky-500", children: [_jsx("span", { children: loading ? 'Parsing…' : 'Tap to choose CSV' }), _jsx("input", { ref: inputRef, type: "file", accept: ".csv,text/csv", className: "sr-only", onChange: (event) => {
                             const file = event.target.files?.[0];
                             if (file)
                                 handleFile(file);

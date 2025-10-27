@@ -28,7 +28,7 @@ import {
   totalAttemptsTracked,
   type InsightState
 } from './lib/insights';
-import type { AppView, CsvRow, LemmaQueueState, QuizItem, RetryState } from './types';
+import type { AppView, CsvRow, LanguagePair, LemmaQueueState, QuizItem, RetryState } from './types';
 
 const CSV_STORAGE = { key: 'csv-data', version: 1 } as const;
 const QUEUE_STORAGE = { key: 'queue', version: 1 } as const;
@@ -39,10 +39,13 @@ const API_KEY_STORAGE = { key: 'api-key', version: 1 } as const;
 const MODEL_STORAGE = { key: 'model', version: 1 } as const;
 const ONBOARDING_STORAGE = { key: 'onboarding', version: 1 } as const;
 const INSIGHTS_STORAGE = { key: 'insights', version: 1 } as const;
+const LANGUAGE_STORAGE = { key: 'language-preference', version: 1 } as const;
+const DEFAULT_LANGUAGES: LanguagePair = { source: 'English', target: 'Spanish' };
 
 type StoredCsv = {
   rows: CsvRow[];
   lemmas: string[];
+  detectedLanguages: LanguagePair;
 };
 
 type ProgressState = {
@@ -84,6 +87,13 @@ const App = () => {
   const [selectedModel, setSelectedModel] = useState<ModelOption['value']>(MODEL_OPTIONS[0].value);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [insights, setInsights] = useState<InsightState>(createInitialInsightState);
+  const [languagePreference, setLanguagePreference] = useState<LanguagePair>({ source: '', target: '' });
+  const [detectedLanguages, setDetectedLanguages] = useState<LanguagePair>(DEFAULT_LANGUAGES);
+  const [lastAttempt, setLastAttempt] = useState<{
+    lemma: string;
+    outcome: 'correct' | 'retry';
+    languages: LanguagePair;
+  } | null>(null);
 
   const dismissOnboarding = () => {
     saveState(ONBOARDING_STORAGE, true);
@@ -114,9 +124,23 @@ const App = () => {
     if (storedKey) setApiKey(storedKey);
     const storedModel = loadState<ModelOption['value']>(MODEL_STORAGE);
     if (storedModel) setSelectedModel(storedModel);
+    const storedLanguages = loadState<LanguagePair>(LANGUAGE_STORAGE);
+    if (storedLanguages) setLanguagePreference(storedLanguages);
     const storedCsv = loadState<StoredCsv>(CSV_STORAGE);
     if (storedCsv) {
-      setCsvData(storedCsv);
+      const normalizedRows = storedCsv.rows.map((row: CsvRow | { spanish?: string; english?: string }) => {
+        if ('target' in row && 'source' in row) {
+          return row as CsvRow;
+        }
+        const legacyRow = row as { spanish?: string; english?: string };
+        return {
+          target: legacyRow.spanish ?? '',
+          source: legacyRow.english ?? ''
+        };
+      });
+      const detected = storedCsv.detectedLanguages ?? DEFAULT_LANGUAGES;
+      setCsvData({ rows: normalizedRows, lemmas: storedCsv.lemmas, detectedLanguages: detected });
+      setDetectedLanguages(detected);
       setView('quiz');
     }
     const storedQueue = loadState<LemmaQueueState>(QUEUE_STORAGE);
@@ -166,6 +190,10 @@ const App = () => {
   }, [selectedModel]);
 
   useEffect(() => {
+    saveState(LANGUAGE_STORAGE, languagePreference);
+  }, [languagePreference]);
+
+  useEffect(() => {
     if (currentItem) {
       saveState(CURRENT_STORAGE, {
         lemma: currentItem.lemma,
@@ -182,6 +210,18 @@ const App = () => {
     saveState(INSIGHTS_STORAGE, insights);
   }, [insights]);
 
+  const activeLanguages = useMemo(() => {
+    const source = languagePreference.source.trim() || detectedLanguages.source || DEFAULT_LANGUAGES.source;
+    const target = languagePreference.target.trim() || detectedLanguages.target || DEFAULT_LANGUAGES.target;
+    return { source, target };
+  }, [languagePreference, detectedLanguages]);
+
+  useEffect(() => {
+    if (!queue || !currentItem) return;
+    setCurrentItem(null);
+    setAnswer('');
+  }, [queue, currentItem, activeLanguages.source, activeLanguages.target]);
+
   const lemmasLeft = useMemo(() => {
     if (!queue) return 0;
     return queue.lemmas.length - queue.usedSet.length;
@@ -197,7 +237,10 @@ const App = () => {
     setLoadingPrompt(true);
     setModelError(null);
     try {
-      const prompt = await generatePrompt(lemma, { apiKey, model: selectedModel });
+      const prompt = await generatePrompt(
+        { lemma, languages: activeLanguages },
+        { apiKey, model: selectedModel }
+      );
       const item: QuizItem = {
         lemma,
         englishPrompt: prompt,
@@ -215,7 +258,9 @@ const App = () => {
       setModelError({
         action: 'generate',
         lemma,
-        payload: {},
+        payload: {
+          languages: activeLanguages
+        },
         message: apiError?.message ?? (error instanceof Error ? error.message : 'Model temporarily unavailable'),
         detail: apiError?.detail,
         status: apiError?.status,
@@ -235,15 +280,21 @@ const App = () => {
     }
   }, [queue, currentItem, loadingPrompt]);
 
-  const handleCsvLoaded = (rows: CsvRow[], lemmas: string[]) => {
+  const handleCsvLoaded = (rows: CsvRow[], lemmas: string[], languages: LanguagePair) => {
     const newQueue = createInitialQueue(lemmas);
-    setCsvData({ rows, lemmas });
+    setCsvData({ rows, lemmas, detectedLanguages: languages });
     setQueue(newQueue);
     setScoreState(createInitialScoreState());
     setProgress(initialProgress);
     setCurrentItem(null);
     setAnswer('');
     setBatchSummary(null);
+    setDetectedLanguages(languages);
+    setLastAttempt(null);
+    setLanguagePreference((prev) => {
+      const hasPreference = prev.source.trim().length > 0 || prev.target.trim().length > 0;
+      return hasPreference ? prev : { source: '', target: '' };
+    });
     setView('quiz');
     setInsights(createInitialInsightState());
   };
@@ -258,9 +309,13 @@ const App = () => {
     const nextAttempts = currentItem.attempts + 1;
     setCurrentItem((prev) => (prev ? { ...prev, status: 'evaluating', attempts: nextAttempts, lastResult: undefined } : prev));
     try {
-      const result = await evaluateAnswer(lemma, englishPrompt, answer, { apiKey, model: selectedModel });
+      const result = await evaluateAnswer(
+        { lemma, prompt: englishPrompt, userAnswer: answer, languages: activeLanguages },
+        { apiKey, model: selectedModel }
+      );
       setScoreState((prev) => recordEvaluation(prev, result.score_delta, result.is_correct_meaning, result.explanations));
       const shouldMove = shouldAdvance(result);
+      setLastAttempt({ lemma, outcome: shouldMove ? 'correct' : 'retry', languages: activeLanguages });
       setInsights((prev) => recordOutcome(prev, lemma, shouldMove));
       vibrate(shouldMove ? 30 : [40, 35, 40]);
       if (shouldMove) {
@@ -281,8 +336,9 @@ const App = () => {
         action: 'evaluate',
         lemma,
         payload: {
-          englishPrompt,
-          userAnswer: answer
+          prompt: englishPrompt,
+          userAnswer: answer,
+          languages: activeLanguages
         },
         message:
           error instanceof ApiError
@@ -359,6 +415,13 @@ const App = () => {
     saveState(API_KEY_STORAGE, value);
   };
 
+  const handleLanguagePreferenceChange = (value: LanguagePair) => {
+    setLanguagePreference({
+      source: value.source.trim(),
+      target: value.target.trim()
+    });
+  };
+
   const handleModelSelect = (value: string) => {
     const match = MODEL_OPTIONS.find((option) => option.value === value);
     setSelectedModel((match ?? MODEL_OPTIONS[0]).value);
@@ -371,7 +434,8 @@ const App = () => {
       SCORE_STORAGE.key,
       PROGRESS_STORAGE.key,
       CURRENT_STORAGE.key,
-      INSIGHTS_STORAGE.key
+      INSIGHTS_STORAGE.key,
+      LANGUAGE_STORAGE.key
     ].forEach((key) => clearState(key));
     setCsvData(null);
     setQueue(null);
@@ -382,6 +446,9 @@ const App = () => {
     setBatchSummary(null);
     setView('welcome');
     setInsights(createInitialInsightState());
+    setLanguagePreference({ source: '', target: '' });
+    setDetectedLanguages(DEFAULT_LANGUAGES);
+    setLastAttempt(null);
     reopenOnboarding();
   };
 
@@ -439,6 +506,24 @@ const App = () => {
             attempts={scoreState.attempts}
             avgAttempts={avgAttempts}
           />
+          {lastAttempt ? (
+            <div
+              className={`space-y-1 rounded-2xl border ${
+                lastAttempt.outcome === 'correct'
+                  ? 'border-emerald-400/40 bg-emerald-500/10'
+                  : 'border-amber-400/40 bg-amber-500/10'
+              } p-4 text-sm text-slate-100`}
+              role="status"
+            >
+              <p className="font-semibold">
+                {lastAttempt.outcome === 'correct' ? 'Marked correct' : 'Needs another try'}
+              </p>
+              <p className="text-xs text-slate-300">
+                Target lemma ({lastAttempt.languages.target}):{' '}
+                <span className="font-semibold text-slate-100">{lastAttempt.lemma}</span>
+              </p>
+            </div>
+          ) : null}
           <InsightsPanel
             streak={insights.streak}
             bestStreak={insights.bestStreak}
@@ -458,8 +543,10 @@ const App = () => {
               onRetry={handleRetryFeedback}
               onNext={handleNextAfterFeedback}
               feedback={currentItem.lastResult}
-              targetLemma={currentItem.status === 'feedback' ? currentItem.lemma : undefined}
+              targetLemma={currentItem.lemma}
               disableInput={loadingPrompt}
+              sourceLanguage={activeLanguages.source}
+              targetLanguage={activeLanguages.target}
             />
           ) : (
             <div className="rounded-2xl bg-slate-900 p-6 text-center text-sm text-slate-300">
@@ -513,6 +600,9 @@ const App = () => {
         onSave={handleSaveApiKey}
         onReset={handleReset}
         onModelChange={handleModelSelect}
+        languages={languagePreference}
+        detectedLanguages={detectedLanguages}
+        onLanguageSave={handleLanguagePreferenceChange}
       />
       {csvData ? <CsvLoader onLoaded={handleCsvLoaded} existingCount={csvData.lemmas.length} /> : null}
       {modelError ? (
@@ -529,6 +619,8 @@ const App = () => {
           <p className="text-xs uppercase tracking-wide text-slate-500">
             {modelError.status ? `Status ${modelError.status}` : 'Status unknown'}
             {modelError.code ? ` · ${modelError.code}` : ''} · Model {activeModel.label}
+            {' · Languages '}
+            {activeLanguages.source}→{activeLanguages.target}
           </p>
           <div className="flex gap-3">
             <button
@@ -553,6 +645,7 @@ const App = () => {
           hasDeck={Boolean(csvData)}
           hasApiKey={apiKey.trim().length > 0}
           modelLabel={activeModel.label}
+          languageLabel={`${activeLanguages.source} → ${activeLanguages.target}`}
           onStart={dismissOnboarding}
           onSkip={() => setShowOnboarding(false)}
         />
