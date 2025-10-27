@@ -1,221 +1,165 @@
 # Spanish Lemma Trainer
 
-Mobile-first web app for drilling English → Spanish translations with strict lemma coverage. Upload your own vocabulary CSV, answer in Spanish, and let OpenAI generate prompts and feedback while the scheduler guarantees every lemma appears exactly once per cycle.
+A mobile-first vocabulary drill app that lets learners upload their own CSV decks, generate language-model prompts, and receive instant feedback. Prompts and grading are powered by the OpenAI Responses API, while all deck data, progress, and optional API keys live entirely in the browser.
+
+---
+
+## Features
+
+- **Bring your own deck** – Upload a semicolon-delimited CSV with two columns (target language; source language). Headers can be any language names; the app auto-detects them and lets you override in Settings.
+- **Strict lemma coverage** – Every lemma appears exactly once per cycle thanks to a deterministic scheduler.
+- **Live insights** – Track streaks, recent accuracy, and “focus next” lemmas to guide revision.
+- **Resilient UX** – Onboarding wizard, retry/skip controls, and detailed error messages when the LLM is unavailable.
+- **Model flexibility** – Choose between `gpt-4o-mini` and `gpt-4o`, or supply any allowed model via the request header.
+- **Privacy by design** – All deck data and optional API key stay in localStorage. The backend simply forwards requests to OpenAI.
+
+---
 
 ## Prerequisites
 
 - Node.js 18+
 - npm 9+
-- An OpenAI API key with access to `gpt-4o-mini`
+- OpenAI API access to `gpt-4o-mini` (users may supply their own API key inside the app; a default key on the backend is optional but recommended for development).
 
-## Local development
+---
 
-1. Install dependencies once:
+## Installation
 
-   ```bash
-   npm install
-   ```
+```bash
+git clone <repo-url>
+cd SpanishVocabTrainer
+npm install
+```
 
-2. Provide your OpenAI API key to the backend proxy. The simplest approach during development is to export it in the same shell before starting the app (you can also paste the key into the in-app Settings panel, which sends it with each request instead of storing it on the server):
+### Development
 
-   ```bash
-   export OPENAI_API_KEY="sk-your-key"
-   ```
+```bash
+npm run dev
+```
 
-   You can also create `server/.env` and export the variable there if you use a process manager that loads dotenv files.
+This starts:
 
-3. Start both the Express proxy (port 3001) and the Vite dev server (port 5173) in watch mode:
+- Backend (Express + OpenAI proxy) on port **3001**
+- Frontend (Vite dev server) on port **5173** with `/api` proxied to the backend
 
-   ```bash
-   npm run dev
-   ```
+Visit http://localhost:5173. Use the onboarding steps to upload a CSV, paste your API key (optional if the backend provides one), and start practicing.
 
-4. Open http://localhost:5173 in Safari (or any modern browser). The Settings panel inside the app lets you paste/override the API key without storing it on the server. CSV parsing, lemma queues, and quiz progress all persist in `localStorage` on the device.
+### Production build
 
-## Production deployment
+```bash
+npm run build
+npm run start   # serves backend (dist/index.js) + vite preview (port 4173)
+```
 
-1. Install dependencies on the target machine (set `NODE_ENV=production` if you want to omit dev dependencies):
+---
 
-   ```bash
-   npm install --omit=dev
-   ```
+## Environment Variables
 
-2. Build both workspaces. This compiles the TypeScript server to `server/dist` and produces the optimized frontend bundle in `frontend/dist`:
+| Variable             | Location     | Purpose                                          |
+|----------------------|--------------|--------------------------------------------------|
+| `OPENAI_API_KEY`     | Backend (`server`) | Default key when requests omit `x-api-key`. Required for backend tests/builds. |
+| `VITE_API_BASE_URL`  | Frontend (`frontend`) | Base URL for API requests. Default `/api` during dev; in production set to the deployed backend, e.g. `https://backend.vercel.app/api`. |
 
-   ```bash
-   npm run build
-   ```
+---
 
-3. Ensure the backend has an OpenAI key in its environment. For example, using a systemd unit:
+## Repository Layout
 
-   ```ini
-   Environment=OPENAI_API_KEY=sk-your-key
-   WorkingDirectory=/opt/spanish-lemma-trainer
-   ExecStart=/usr/bin/npm run start
-   ```
+```
+SpanishVocabTrainer/
+├─ package.json (workspaces root)
+├─ scripts/
+│  ├─ dev.js      # runs backend + frontend concurrently
+│  └─ start.js    # runs backend build output + vite preview
+├─ frontend/
+│  ├─ package.json, tsconfig.json, vite.config.ts, vitest configs
+│  └─ src/
+│     ├─ App.tsx, main.tsx, styles
+│     ├─ components/ (CsvLoader, QuizCard, ScorePanel, Settings, Onboarding, InsightsPanel, ProgressBar)
+│     ├─ lib/ (csv parsing, scheduler, scoring, insights, OpenAI client, storage helpers, evaluation logic)
+│     ├─ config/models.ts
+│     ├─ types.ts
+│     └─ __tests__/ (Vitest suites)
+└─ server/
+   ├─ package.json, tsconfig.json
+   └─ src/ (index.ts, openai.ts, prompts.ts, schemas.ts)
+```
 
-   The `start` script launches the compiled Express server on `PORT` (default 3001) and serves the built frontend via `vite preview` on port 4173. Frontend requests to `/api/*` automatically proxy to the backend route.
+---
 
-4. Expose the appropriate ports through your reverse proxy or load balancer:
+## CSV Format
 
-   - `/` → frontend preview server (default http://localhost:4173)
-   - `/api` → Express proxy (default http://localhost:3001)
+- Semicolon (`;`) separator
+- Two columns: **target language** first, **source language** second
+- First row may be headers in any language (used to auto-label prompts)
 
-   When placing both behind a reverse proxy such as Nginx or Caddy, forward `/api` to the Express target and everything else to the Vite preview target. Terminate TLS at the proxy so that the Node processes only handle HTTP.
+Example:
 
-5. (Optional) Use a process manager like systemd, PM2, or Docker to keep the two processes running. In Docker, you can run `npm run build` in a build stage and `npm run start` in the final stage with the API key injected via secrets or environment variables.
+```
+Spanish;English
+necesitar;"I need"
+cocinar;"to cook"
+```
+
+On upload, lemmas are lowercased/deduplicated from the target column.
+
+---
+
+## Useful Commands
+
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Run backend + frontend in watch mode |
+| `npm run build` | Compile backend TypeScript (`server/dist`) and frontend bundle (`frontend/dist`) |
+| `npm run start` | Serve the compiled backend and frontend preview for production testing |
+| `npm test` | Run frontend Vitest suite (backend currently has no tests) |
+| `npm --workspace frontend run test` | Frontend tests only |
+| `npm --workspace server run dev` | Backend dev server only |
+
+---
 
 ## Deploying to Vercel
 
-Vercel can host both the static frontend and the Express proxy by using two deployments that share this repository: the frontend as a Vercel **Static Site** and the backend as a **Node.js** Serverless Function. The steps below assume you already have a Vercel account and the [Vercel CLI](https://vercel.com/docs/cli) installed.
+The recommended setup uses **two** Vercel projects pointing to the same repository.
 
-### 1. Prepare the repository
+### Frontend project
 
-1. Commit and push the latest code to a branch that Vercel can read.
-2. Run `npm install && npm run build` locally once to verify the production build passes before deploying.
+- Root directory: `frontend`
+- Build command: `npm run build`
+- Output directory: `dist`
+- Environment variable: `VITE_API_BASE_URL=https://<backend-app>.vercel.app/api`
 
-### 2. Create the frontend project
+### Backend project
 
-1. From the repository root:
+- Root directory: `server`
+- Build command: `npm run build`
+- Output directory: `dist`
+- Env var: `OPENAI_API_KEY`
+- Requests to `/api/generate` and `/api/evaluate` are proxied to OpenAI; `/` will return 404 (expected).
 
-   ```bash
-   cd frontend
-   vercel init --yes
-   ```
+After both deployments, the frontend will call the backend via the configured `VITE_API_BASE_URL`.
 
-   Accept the defaults for a static Vite site. This links `frontend/` to a new Vercel project.
+---
 
-2. When prompted:
-   - **Build Command:** `npm run build`
-   - **Output Directory:** `dist`
-   - **Install Command:** leave blank (Vercel uses `npm install`).
+## Smoke Tests
 
-3. Deploy the frontend:
+1. **API**: `curl -X POST https://<backend>/api/generate -H "Content-Type: application/json" -H "x-api-key: <key>" -d '{"lemma":"probar","languages":{"source":"English","target":"Spanish"}}'`
+2. **Frontend**: Upload a small CSV, complete at least one prompt, ensure feedback appears and stats update.
+3. **Error toast**: Temporarily remove your API key to confirm retry/skip workflow.
 
-   ```bash
-   vercel deploy --prod
-   ```
+---
 
-   Note the resulting production URL (for example, `https://spanish-lemma-trainer.vercel.app`).
+## Privacy & Storage
 
-### 3. Create the backend project
+- All deck rows, progress, insights, language overrides, and optional API key are stored in `localStorage` with the prefix `svt:*`.
+- The backend never logs or stores user prompts/answers; it simply forwards them to OpenAI.
+- Resetting progress in Settings clears all localStorage entries (except the saved API key) and re-opens onboarding.
 
-1. Link the Express proxy in `server/` to a second Vercel project:
+---
 
-   ```bash
-   cd ../server
-   vercel init --yes
-   ```
+## Need the full spec?
 
-2. Choose the **Node.js** framework with:
-   - **Build Command:** `npm run build`
-   - **Output Directory:** `dist`
-   - **Development Command:** `npm run dev` (optional, used for `vercel dev`).
+See [`REQUIREMENTS.md`](./REQUIREMENTS.md) for an exhaustive rebuild document covering every module, API contract, and validation step.
 
-3. Add the OpenAI key to Vercel:
+---
 
-   ```bash
-   vercel env add OPENAI_API_KEY
-   ```
-
-   Provide the value for each environment (`production`, `preview`, `development`).
-
-4. Deploy the backend:
-
-   ```bash
-   vercel deploy --prod
-   ```
-
-   Copy the API base URL (for example, `https://spanish-lemma-trainer-api.vercel.app`).
-
-### 4. Connect the frontend to the backend
-
-1. In the frontend project dashboard on Vercel, go to **Settings → Environment Variables**.
-2. Add `VITE_API_BASE_URL` with the backend URL suffixed by `/api`, such as `https://spanish-lemma-trainer-api.vercel.app/api`.
-3. Redeploy the frontend so the new value is baked into the bundle:
-
-   ```bash
-   vercel deploy --prod
-   ```
-
-### 5. Optional: local verification with `vercel dev`
-
-1. From the repository root, run `vercel dev` to emulate both projects locally (the CLI reads the linked project configs).
-2. Visit the reported localhost URL (typically `http://localhost:3000`) and run through a quiz batch to validate CSV ingestion and OpenAI calls end-to-end.
-
-### 6. Post-deployment checklist
-
-- Open the production frontend on an iPhone or iPad to confirm layout, keyboard safe areas, and localStorage persistence.
-- Monitor the backend project in the Vercel dashboard for function errors (missing `OPENAI_API_KEY`, rate limits, etc.).
-- Keep Vercel Analytics disabled unless you explicitly need it to preserve the app’s privacy stance.
-
-## Smoke testing
-
-After the services start:
-
-1. Hit the health of each port:
-
-   ```bash
-   curl http://localhost:3001/api/generate -X POST -H "Content-Type: application/json" -d '{"lemma":"probar"}'
-   ```
-
-   You should receive either a 200 with `{ "prompt": "..." }` or a 401 if the key is missing.
-
-2. Visit the frontend in a browser, upload a small CSV (semicolon separated with `Spanish;English` headers), and complete at least one batch of 10 questions to confirm persistence and OpenAI connectivity.
-
-3. Check server logs for any repeated "Failed to generate/evaluate" errors; if present, verify the API key and outbound network access.
-
-## Testing & quality gates
-
-Run the full test suite (frontend + backend Vitest suites) from the repository root:
-
-```bash
-npm test
-```
-
-If you only want frontend or backend tests:
-
-```bash
-npm --workspace frontend run test
-npm --workspace server run test
-```
-
-Lint the React code with ESLint:
-
-```bash
-npm --workspace frontend run lint
-```
-
-These commands require the dev dependencies installed (`npm install` without `--omit=dev`).
-
-## CSV format
-
-- Semicolon (`;`) delimiter
-- Header row exactly: `Spanish;English`
-- Example:
-
-  ```
-  Spanish;English
-  necesitar;"I need"
-  cocinar;"to cook"
-  ```
-
-The app lowercases and deduplicates the Spanish column to build the lemma deck.
-
-## Privacy & storage
-
-- CSV parsing happens entirely in the browser; no vocabulary data is sent to the server.
-- `localStorage` keeps deck progress, lemma queue, batch stats, and the optional API key. Use **Reset progress** in Settings to clear everything except the saved API key.
-- Backend only receives the target lemma, generated English prompt, and your Spanish answer for scoring.
-
-## iOS / iPadOS tips
-
-- Designed with `svh` units, ≥16px fonts, and 44×44 pt tap targets to prevent Safari zooming.
-- Inputs disable autocorrect, autocapitalize, and spellcheck for consistent Spanish entry.
-- Safe-area aware bottom padding keeps controls above the on-screen keyboard.
-
-## Known limits
-
-- Requires an active OpenAI account and model availability; offline or API outages surface a retry/skip toast.
-- Lemma detection relies on OpenAI’s evaluator—edge cases may need manual review.
-- Currently tuned for Spanish; other languages would need adjusted prompts and evaluation rules.
+Happy drilling! Upload a deck, paste your key, and keep the lemmas flowing.
